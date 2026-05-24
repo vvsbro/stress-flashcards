@@ -1,6 +1,6 @@
-import { AlertTriangle, BarChart3 } from "lucide-react";
+import { AlertTriangle, BarChart3, Brain, Clock3 } from "lucide-react";
 import { useMemo } from "react";
-import { StatsByWord, accuracy, getTopMistakes, getWordStat, stressWords } from "../lib/stress";
+import { StatsByWord, accuracy, getLearningSummary, getMemoryProfile, getTopMistakes, getWordStat, stressWords } from "../lib/stress";
 
 type AllWordsPageProps = {
   stats: StatsByWord;
@@ -14,10 +14,32 @@ const mistakeScore = (wordId: string, stats: StatsByWord) => {
   return stat.wrong * 100 + Math.round((stat.wrong / stat.attempts) * 100);
 };
 
+const bucketLabel = {
+  new: "новое",
+  urgent: "срочно",
+  weak: "слабое",
+  learning: "учится",
+  mastered: "знаешь",
+};
+
+const bucketClass = {
+  new: "bg-sky-50 text-sky-800",
+  urgent: "bg-rose-50 text-rose-800",
+  weak: "bg-amber-50 text-amber-800",
+  learning: "bg-teal-50 text-teal-800",
+  mastered: "bg-emerald-50 text-emerald-800",
+};
+
 export function AllWordsPage({ stats }: AllWordsPageProps) {
   const topMistakes = getTopMistakes(stats, 8);
+  const summary = getLearningSummary(stats);
   const sortedWords = useMemo(() => {
     return [...stressWords].sort((a, b) => {
+      const aProfile = getMemoryProfile(a, stats);
+      const bProfile = getMemoryProfile(b, stats);
+      const byPriority = bProfile.priority - aProfile.priority;
+      if (byPriority !== 0) return byPriority;
+
       const byScore = mistakeScore(b.id, stats) - mistakeScore(a.id, stats);
       if (byScore !== 0) return byScore;
       return a.plain.localeCompare(b.plain, "ru");
@@ -42,6 +64,14 @@ export function AllWordsPage({ stats }: AllWordsPageProps) {
           </div>
         </div>
 
+        <div className="mt-5 grid gap-2 sm:grid-cols-5">
+          <SummaryTile label="Новые" value={summary.new} />
+          <SummaryTile label="Срочно" value={summary.urgent} tone="bad" />
+          <SummaryTile label="Слабые" value={summary.weak} tone="warn" />
+          <SummaryTile label="В процессе" value={summary.learning} />
+          <SummaryTile label="Знаешь" value={summary.mastered} tone="good" />
+        </div>
+
         <div className="mt-5">
           <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.14em] text-stone-500">
             <AlertTriangle className="h-4 w-4 text-amber-600" />
@@ -64,37 +94,64 @@ export function AllWordsPage({ stats }: AllWordsPageProps) {
         </div>
       </section>
 
-      <section className="overflow-hidden rounded-lg border border-stone-200 bg-white shadow-sm">
-        <div className="grid grid-cols-[72px_minmax(0,1fr)_112px_96px] gap-3 border-b border-stone-200 bg-stone-50 px-4 py-3 text-xs font-semibold uppercase tracking-[0.12em] text-stone-500">
+      <section className="overflow-x-auto rounded-lg border border-stone-200 bg-white shadow-sm">
+        <div className="grid min-w-[720px] grid-cols-[60px_minmax(0,1fr)_96px_96px_96px] gap-3 border-b border-stone-200 bg-stone-50 px-4 py-3 text-xs font-semibold uppercase tracking-[0.12em] text-stone-500">
           <span>Буква</span>
           <span>Слово</span>
           <span>Точность</span>
-          <span>Ошибки</span>
+          <span>Память</span>
+          <span>Статус</span>
         </div>
         <div className="divide-y divide-stone-100">
           {sortedWords.map((word) => {
             const stat = getWordStat(stats, word.id);
             const wordAccuracy = accuracy(stat);
+            const profile = getMemoryProfile(word, stats);
 
             return (
               <div
                 key={word.id}
-                className="grid grid-cols-[72px_minmax(0,1fr)_112px_96px] items-center gap-3 px-4 py-3 text-sm transition hover:bg-teal-50/60"
+                className="grid min-w-[720px] grid-cols-[60px_minmax(0,1fr)_96px_96px_96px] items-center gap-3 px-4 py-3 text-sm transition hover:bg-teal-50/60"
               >
                 <span className="font-semibold text-stone-500">{word.letter}</span>
                 <div className="min-w-0">
                   <p className="truncate font-medium text-stone-950">{word.answer}</p>
-                  {word.note ? <p className="truncate text-xs text-stone-500">{word.note}</p> : null}
+                  <p className="truncate text-xs text-stone-500">{word.note ?? profile.reason}</p>
                 </div>
                 <span className={wordAccuracy === null ? "text-stone-500" : wordAccuracy >= 80 ? "font-semibold text-emerald-700" : "font-semibold text-rose-700"}>
                   {formatAccuracy(wordAccuracy)}
                 </span>
-                <span className="text-stone-700">{stat.wrong}</span>
+                <span className="flex items-center gap-1 text-stone-700">
+                  <Brain className="h-3.5 w-3.5 text-teal-700" />
+                  {profile.mastery}%
+                </span>
+                <span className={`rounded-md px-2 py-1 text-center text-xs font-semibold ${bucketClass[profile.bucket]}`}>
+                  {bucketLabel[profile.bucket]}
+                </span>
               </div>
             );
           })}
         </div>
       </section>
+    </div>
+  );
+}
+
+function SummaryTile({ label, value, tone = "neutral" }: { label: string; value: number; tone?: "neutral" | "good" | "bad" | "warn" }) {
+  const toneClass = {
+    neutral: "bg-stone-50 text-stone-800",
+    good: "bg-emerald-50 text-emerald-800",
+    bad: "bg-rose-50 text-rose-800",
+    warn: "bg-amber-50 text-amber-800",
+  }[tone];
+
+  return (
+    <div className={`rounded-md px-3 py-3 ${toneClass}`}>
+      <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em]">
+        <Clock3 className="h-3.5 w-3.5" />
+        {label}
+      </p>
+      <p className="mt-2 text-2xl font-semibold">{value}</p>
     </div>
   );
 }
