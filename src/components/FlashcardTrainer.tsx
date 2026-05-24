@@ -1,5 +1,5 @@
 import { ArrowRight, Brain, Check, Gauge, Keyboard, Layers3, Target, Timer, X, Zap } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { recordAnswerInDb } from "../lib/progressApi";
 import {
   StatsByWord,
@@ -33,6 +33,8 @@ const trainingModes: Array<{ id: TrainingMode; label: string; description: strin
 const pickInitialWord = (stats: StatsByWord, mode: TrainingMode) => pickNextWord(stressWords, stats, [], mode);
 
 const formatAccuracy = (value: number | null) => (value === null ? "нет попыток" : `${value}%`);
+const AUTO_ADVANCE_CORRECT_MS = 650;
+const AUTO_ADVANCE_WRONG_MS = 1100;
 
 export function FlashcardTrainer({ stats, setStats }: FlashcardTrainerProps) {
   const [mode, setMode] = useState<TrainingMode>("smart");
@@ -41,6 +43,7 @@ export function FlashcardTrainer({ stats, setStats }: FlashcardTrainerProps) {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [lastResult, setLastResult] = useState<boolean | null>(null);
   const [cardStartedAt, setCardStartedAt] = useState(() => Date.now());
+  const autoAdvanceTimerRef = useRef<number | null>(null);
 
   const choices = useMemo(() => getLetterChoices(currentWord), [currentWord]);
   const vowelChoices = choices.filter((choice) => choice.isVowel);
@@ -51,9 +54,17 @@ export function FlashcardTrainer({ stats, setStats }: FlashcardTrainerProps) {
   const learningSummary = getLearningSummary(stats);
   const answered = selectedIndex !== null;
 
+  const clearAutoAdvance = () => {
+    if (autoAdvanceTimerRef.current === null) return;
+    window.clearTimeout(autoAdvanceTimerRef.current);
+    autoAdvanceTimerRef.current = null;
+  };
+
   useEffect(() => {
     if (!currentWord) setCurrentWord(pickInitialWord(stats, mode));
   }, [currentWord, mode, stats]);
+
+  useEffect(() => clearAutoAdvance, []);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -82,11 +93,16 @@ export function FlashcardTrainer({ stats, setStats }: FlashcardTrainerProps) {
     const isCorrect = index === currentWord.stressLetterIndex;
     const responseMs = Date.now() - cardStartedAt;
     const nextStats = recordAnswer(stats, currentWord.id, isCorrect, responseMs);
+    const delay = isCorrect ? AUTO_ADVANCE_CORRECT_MS : AUTO_ADVANCE_WRONG_MS;
 
     setStats(nextStats);
     saveStats(nextStats);
     setSelectedIndex(index);
     setLastResult(isCorrect);
+    clearAutoAdvance();
+    autoAdvanceTimerRef.current = window.setTimeout(() => {
+      nextWord(nextStats);
+    }, delay);
 
     try {
       const dbStats = await recordAnswerInDb(currentWord.id, isCorrect, responseMs);
@@ -97,16 +113,18 @@ export function FlashcardTrainer({ stats, setStats }: FlashcardTrainerProps) {
     }
   };
 
-  const nextWord = () => {
+  const nextWord = (statsForPick = stats) => {
+    clearAutoAdvance();
     const nextRecentIds = [currentWord.id, ...recentIds].slice(0, 7);
     setRecentIds(nextRecentIds);
-    setCurrentWord(pickNextWord(stressWords, stats, nextRecentIds, mode));
+    setCurrentWord(pickNextWord(stressWords, statsForPick, nextRecentIds, mode));
     setSelectedIndex(null);
     setLastResult(null);
     setCardStartedAt(Date.now());
   };
 
   const changeMode = (nextMode: TrainingMode) => {
+    clearAutoAdvance();
     setMode(nextMode);
     setSelectedIndex(null);
     setLastResult(null);
@@ -209,7 +227,7 @@ export function FlashcardTrainer({ stats, setStats }: FlashcardTrainerProps) {
             {lastResult === null ? (
               <p className="flex items-center gap-2 text-sm text-stone-600">
                 <Keyboard className="h-4 w-4" />
-                Нажимай мышкой или цифрами 1-{vowelChoices.length}. После ответа Enter или пробел.
+                Нажимай мышкой или цифрами 1-{vowelChoices.length}. После ответа карточка сменится сама.
               </p>
             ) : (
               <div
@@ -227,11 +245,11 @@ export function FlashcardTrainer({ stats, setStats }: FlashcardTrainerProps) {
 
             <button
               type="button"
-              onClick={nextWord}
+              onClick={() => nextWord()}
               className="inline-flex h-11 items-center gap-2 rounded-md bg-stone-950 px-4 text-sm font-semibold text-white transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-300"
               disabled={!answered}
             >
-              <span>Дальше</span>
+              <span>Сразу дальше</span>
               <ArrowRight className="h-4 w-4" />
             </button>
           </div>
