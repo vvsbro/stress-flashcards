@@ -1,3 +1,4 @@
+import { highYieldStressGroups } from "../data/highYieldStressWords";
 import { stressEntrySeeds } from "../data/stressWords";
 
 const VOWELS = new Set(["а", "е", "ё", "и", "о", "у", "ы", "э", "ю", "я"]);
@@ -33,11 +34,22 @@ export type MemoryProfile = {
   intervalMs: number;
   reason: string;
   bucket: "new" | "urgent" | "weak" | "learning" | "mastered";
+  highYieldScore: number;
 };
 
 const isVowel = (char: string) => VOWELS.has(char.toLocaleLowerCase("ru-RU"));
 
 const normalizeAnswer = (word: string) => word.toLocaleLowerCase("ru-RU");
+
+const highYieldScoreByWord = highYieldStressGroups.reduce<Record<string, number>>((scores, group) => {
+  group.words.forEach((word, index) => {
+    const positionMultiplier = 1 + (group.words.length - index) / group.words.length;
+    const key = normalizeAnswer(word);
+    scores[key] = (scores[key] ?? 0) + group.weight * positionMultiplier;
+  });
+
+  return scores;
+}, {});
 
 const buildId = (letter: string, word: string, note?: string) => {
   const suffix = note ? `-${note.toLocaleLowerCase("ru-RU").replace(/[^а-яёa-z0-9]+/gi, "-")}` : "";
@@ -141,6 +153,7 @@ const getReviewInterval = (stat: WordStat) => {
 
 export const getMemoryProfile = (word: StressWord, stats: StatsByWord, recentIds: string[] = [], mode: TrainingMode = "smart", now = Date.now()): MemoryProfile => {
   const stat = getWordStat(stats, word.id);
+  const highYieldScore = highYieldScoreByWord[word.plain] ?? 0;
   const wrongRate = stat.attempts === 0 ? 0 : stat.wrong / stat.attempts;
   const intervalMs = getReviewInterval(stat);
   const dueAt = stat.lastAnsweredAt === undefined ? undefined : stat.lastAnsweredAt + intervalMs;
@@ -149,15 +162,16 @@ export const getMemoryProfile = (word: StressWord, stats: StatsByWord, recentIds
   const speedPenalty = stat.averageResponseMs === undefined ? 0 : clamp((stat.averageResponseMs - 2_800) / 140, 0, 26);
   const errorPressure = stat.wrong * 11 + wrongRate * 34 + (stat.lastCorrect === false ? 28 : 0);
   const newPressure = stat.attempts === 0 ? 56 : Math.max(0, 18 - stat.attempts * 8);
+  const highYieldPressure = highYieldScore * (stat.attempts === 0 ? 5.2 : 3.4);
   const recencyPenalty = recentIds.includes(word.id) ? 0.22 : 1;
   const mastery = clamp(Math.round(stat.correct * 15 + Math.max(stat.streak, 0) * 12 - stat.wrong * 20 - wrongRate * 34 - speedPenalty), 0, 100);
   const weaknessPressure = clamp(80 - mastery, 0, 80);
 
   const modePressure = {
-    smart: newPressure + duePressure + errorPressure + weaknessPressure * 0.48,
-    mistakes: errorPressure * 1.75 + weaknessPressure * 0.9 + duePressure,
-    new: newPressure * 2.2 + (stat.attempts === 0 ? 34 : 0) + duePressure * 0.25,
-    exam: duePressure + weaknessPressure * 0.7 + errorPressure * 0.82 + Math.random() * 22,
+    smart: newPressure + duePressure + errorPressure + weaknessPressure * 0.48 + highYieldPressure,
+    mistakes: errorPressure * 1.75 + weaknessPressure * 0.9 + duePressure + highYieldPressure * 0.78,
+    new: newPressure * 2.2 + (stat.attempts === 0 ? 34 : 0) + duePressure * 0.25 + highYieldPressure * 0.9,
+    exam: duePressure + weaknessPressure * 0.7 + errorPressure * 0.82 + highYieldPressure * 1.15 + Math.random() * 22,
   }[mode];
 
   const priority = clamp((8 + modePressure + speedPenalty) * recencyPenalty, 0.35, 220);
@@ -173,7 +187,9 @@ export const getMemoryProfile = (word: StressWord, stats: StatsByWord, recentIds
             : "learning";
 
   const reason =
-    bucket === "new"
+    highYieldScore > 0 && (bucket === "new" || bucket === "learning")
+      ? "приоритетный минимум"
+      : bucket === "new"
       ? "новое слово"
       : bucket === "urgent"
         ? "пора повторить"
@@ -183,7 +199,7 @@ export const getMemoryProfile = (word: StressWord, stats: StatsByWord, recentIds
             ? "закрепление"
             : "на этапе запоминания";
 
-  return { mastery, priority, dueAt, intervalMs, reason, bucket };
+  return { mastery, priority, dueAt, intervalMs, reason, bucket, highYieldScore };
 };
 
 export const pickNextWord = (words: StressWord[], stats: StatsByWord, recentIds: string[], mode: TrainingMode = "smart") => {
@@ -227,6 +243,15 @@ export const getLearningSummary = (stats: StatsByWord) => {
     },
     { new: 0, urgent: 0, weak: 0, learning: 0, mastered: 0 },
   );
+};
+
+export const getHighYieldCoverage = () => {
+  const knownWords = new Set(stressWords.map((word) => word.plain));
+  const requestedWords = new Set(highYieldStressGroups.flatMap((group) => group.words.map(normalizeAnswer)));
+  const present = [...requestedWords].filter((word) => knownWords.has(word));
+  const missing = [...requestedWords].filter((word) => !knownWords.has(word));
+
+  return { present: present.length, missing };
 };
 
 export const getLetterChoices = (word: StressWord) => {
