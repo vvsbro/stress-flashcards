@@ -12,11 +12,16 @@ body {
   min-height: 100vh;
   background: #f7f4ee;
   color: #1c1917;
+  -webkit-tap-highlight-color: transparent;
 }
 
 button,
 input {
   font: inherit;
+}
+
+button {
+  touch-action: manipulation;
 }
 
 ::selection {

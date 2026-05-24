@@ -49,22 +49,23 @@ export function AllWordsPage({ stats }: AllWordsPageProps) {
   const attempted = stressWords.filter((word) => getWordStat(stats, word.id).attempts > 0).length;
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-3 sm:space-y-5">
       <section className="rounded-lg border border-stone-200 bg-white p-4 shadow-sm sm:p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-[0.14em] text-teal-700">Все слова</p>
-            <h1 className="mt-1 text-xl font-semibold text-stone-950 sm:text-2xl">Список с процентом правильности</h1>
+            <h1 className="mt-1 truncate text-lg font-semibold text-stone-950 sm:text-2xl">Список с процентом правильности</h1>
           </div>
-          <div className="flex items-center gap-2 rounded-md bg-stone-100 px-3 py-2 text-sm text-stone-700">
+          <div className="inline-flex shrink-0 items-center gap-2 rounded-md bg-stone-100 px-3 py-2 text-sm text-stone-700">
             <BarChart3 className="h-4 w-4 text-teal-700" />
-            <span>
+            <span className="hidden sm:inline">
               {stressWords.length} всего, {attempted} уже были
             </span>
+            <span className="sm:hidden">{stressWords.length}</span>
           </div>
         </div>
 
-        <div className="mt-5 grid gap-2 sm:grid-cols-5">
+        <div className="mt-4 grid grid-cols-2 gap-2 sm:mt-5 sm:grid-cols-5">
           <SummaryTile label="Новые" value={summary.new} />
           <SummaryTile label="Срочно" value={summary.urgent} tone="bad" />
           <SummaryTile label="Слабые" value={summary.weak} tone="warn" />
@@ -94,7 +95,38 @@ export function AllWordsPage({ stats }: AllWordsPageProps) {
         </div>
       </section>
 
-      <section className="overflow-x-auto rounded-lg border border-stone-200 bg-white shadow-sm">
+      <section className="space-y-2 sm:hidden">
+        {sortedWords.map((word) => {
+          const stat = getWordStat(stats, word.id);
+          const wordAccuracy = accuracy(stat);
+          const profile = getMemoryProfile(word, stats);
+
+          return (
+            <article key={word.id} className="rounded-lg border border-stone-200 bg-white p-3 shadow-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="rounded-md bg-stone-100 px-2 py-1 text-xs font-semibold text-stone-500">{word.letter}</span>
+                    <h2 className="truncate text-lg font-semibold text-stone-950">{word.answer}</h2>
+                  </div>
+                  <p className="mt-1 truncate text-xs text-stone-500">{word.note ?? profile.reason}</p>
+                </div>
+                <span className={`shrink-0 rounded-md px-2 py-1 text-xs font-semibold ${bucketClass[profile.bucket]}`}>
+                  {bucketLabel[profile.bucket]}
+                </span>
+              </div>
+
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                <MobileMetric label="Точность" value={formatAccuracy(wordAccuracy)} />
+                <MobileMetric label="Память" value={`${profile.mastery}%`} />
+                <MobileMetric label="Ошибки" value={String(stat.wrong)} tone={stat.wrong > 0 ? "bad" : "neutral"} />
+              </div>
+            </article>
+          );
+        })}
+      </section>
+
+      <section className="hidden overflow-x-auto rounded-lg border border-stone-200 bg-white shadow-sm sm:block">
         <div className="grid min-w-[720px] grid-cols-[60px_minmax(0,1fr)_96px_96px_96px] gap-3 border-b border-stone-200 bg-stone-50 px-4 py-3 text-xs font-semibold uppercase tracking-[0.12em] text-stone-500">
           <span>Буква</span>
           <span>Слово</span>
@@ -147,11 +179,20 @@ function SummaryTile({ label, value, tone = "neutral" }: { label: string; value:
 
   return (
     <div className={`rounded-md px-3 py-3 ${toneClass}`}>
-      <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em]">
+      <p className="flex items-center gap-2 text-[0.68rem] font-semibold uppercase tracking-[0.08em] sm:text-xs sm:tracking-[0.12em]">
         <Clock3 className="h-3.5 w-3.5" />
         {label}
       </p>
       <p className="mt-2 text-2xl font-semibold">{value}</p>
+    </div>
+  );
+}
+
+function MobileMetric({ label, value, tone = "neutral" }: { label: string; value: string; tone?: "neutral" | "bad" }) {
+  return (
+    <div className={["rounded-md px-2 py-2 text-center", tone === "bad" ? "bg-rose-50 text-rose-800" : "bg-stone-50 text-stone-800"].join(" ")}>
+      <p className="truncate text-[0.68rem] uppercase tracking-[0.08em] text-stone-500">{label}</p>
+      <p className="mt-1 text-sm font-semibold">{value}</p>
     </div>
   );
 }

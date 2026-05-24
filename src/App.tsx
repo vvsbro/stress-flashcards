@@ -48,19 +48,19 @@ export function App() {
 
   return (
     <main className="min-h-screen bg-[#f4f6f3]">
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-3 py-4 sm:px-5 lg:px-8">
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-3 px-3 pb-24 pt-3 sm:gap-5 sm:px-5 sm:py-4 lg:px-8">
         <header className="rounded-lg border border-stone-200 bg-white shadow-sm">
-          <div className="flex flex-col gap-4 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
-            <div>
+          <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-4">
+            <div className="min-w-0">
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-teal-700">ЕГЭ, задание 4</p>
-              <h1 className="mt-1 text-2xl font-semibold text-stone-950">Тренажер ударений</h1>
-              <p className="mt-1 text-sm text-stone-500">
+              <h1 className="mt-1 truncate text-xl font-semibold text-stone-950 sm:text-2xl">Тренажер ударений</h1>
+              <p className="mt-1 truncate text-xs text-stone-500 sm:text-sm">
                 Прогресс: {storageMode === "database" ? "data/progress.db" : "локально в браузере"}
               </p>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
-              <nav className="grid grid-cols-2 rounded-md bg-stone-100 p-1">
+            <div className="hidden flex-wrap items-center gap-2 sm:flex">
+              <nav className="grid grid-cols-2 rounded-md bg-stone-100 p-1" aria-label="Основная навигация">
                 <button
                   type="button"
                   onClick={() => setPage("trainer")}
@@ -100,6 +100,42 @@ export function App() {
 
         {page === "trainer" ? <FlashcardTrainer stats={stats} setStats={setStats} /> : <AllWordsPage stats={stats} />}
       </div>
+
+      <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-stone-200 bg-white/95 px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-2 shadow-[0_-10px_30px_rgba(28,25,23,0.08)] backdrop-blur sm:hidden" aria-label="Мобильная навигация">
+        <div className="mx-auto grid max-w-md grid-cols-[1fr_1fr_52px] gap-2">
+          <button
+            type="button"
+            onClick={() => setPage("trainer")}
+            className={[
+              "inline-flex h-12 items-center justify-center gap-2 rounded-md text-sm font-semibold transition",
+              page === "trainer" ? "bg-stone-950 text-white" : "bg-stone-100 text-stone-700",
+            ].join(" ")}
+          >
+            <Flame className="h-4 w-4" />
+            <span>Карты</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setPage("words")}
+            className={[
+              "inline-flex h-12 items-center justify-center gap-2 rounded-md text-sm font-semibold transition",
+              page === "words" ? "bg-stone-950 text-white" : "bg-stone-100 text-stone-700",
+            ].join(" ")}
+          >
+            <BookOpen className="h-4 w-4" />
+            <span>Слова</span>
+          </button>
+          <button
+            type="button"
+            onClick={resetStats}
+            className="inline-flex h-12 items-center justify-center rounded-md border border-stone-200 bg-white text-stone-600"
+            title="Сбросить статистику"
+            aria-label="Сбросить статистику"
+          >
+            <RotateCcw className="h-4 w-4" />
+          </button>
+        </div>
+      </nav>
     </main>
   );
 }
