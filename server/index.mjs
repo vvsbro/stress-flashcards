@@ -28,9 +28,12 @@ database.run(`
     wrong INTEGER NOT NULL DEFAULT 0,
     streak INTEGER NOT NULL DEFAULT 0,
     last_answered_at INTEGER,
-    last_correct INTEGER
+    last_correct INTEGER,
+    average_response_ms INTEGER
   );
 `);
+
+ensureColumn("word_stats", "average_response_ms", "INTEGER");
 
 database.run(`
   CREATE TABLE IF NOT EXISTS app_meta (
@@ -56,14 +59,24 @@ app.get("/api/stats", (_request, response) => {
 
 app.post("/api/answer", async (request, response, next) => {
   try {
-    const { wordId, isCorrect } = request.body ?? {};
+    const { wordId, isCorrect, responseMs } = request.body ?? {};
 
     if (typeof wordId !== "string" || wordId.length === 0 || typeof isCorrect !== "boolean") {
       response.status(400).json({ error: "wordId and isCorrect are required" });
       return;
     }
 
+    if (responseMs !== undefined && (!Number.isFinite(responseMs) || responseMs < 0)) {
+      response.status(400).json({ error: "responseMs must be a positive number" });
+      return;
+    }
+
     const current = readStat(wordId);
+    const averageResponseMs =
+      responseMs === undefined
+        ? current.averageResponseMs
+        : Math.round(current.averageResponseMs === undefined ? responseMs : current.averageResponseMs * 0.72 + responseMs * 0.28);
+
     const nextStat = {
       attempts: current.attempts + 1,
       correct: current.correct + (isCorrect ? 1 : 0),
@@ -71,19 +84,21 @@ app.post("/api/answer", async (request, response, next) => {
       streak: isCorrect ? Math.max(0, current.streak) + 1 : Math.min(0, current.streak) - 1,
       lastAnsweredAt: Date.now(),
       lastCorrect: isCorrect,
+      averageResponseMs,
     };
 
     database.run(
       `
-        INSERT INTO word_stats (word_id, attempts, correct, wrong, streak, last_answered_at, last_correct)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO word_stats (word_id, attempts, correct, wrong, streak, last_answered_at, last_correct, average_response_ms)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(word_id) DO UPDATE SET
           attempts = excluded.attempts,
           correct = excluded.correct,
           wrong = excluded.wrong,
           streak = excluded.streak,
           last_answered_at = excluded.last_answered_at,
-          last_correct = excluded.last_correct
+          last_correct = excluded.last_correct,
+          average_response_ms = excluded.average_response_ms
       `,
       [
         wordId,
@@ -93,6 +108,7 @@ app.post("/api/answer", async (request, response, next) => {
         nextStat.streak,
         nextStat.lastAnsweredAt,
         nextStat.lastCorrect ? 1 : 0,
+        nextStat.averageResponseMs,
       ],
     );
 
@@ -139,6 +155,7 @@ function readStat(wordId) {
   const result = database.exec(
     `
       SELECT attempts, correct, wrong, streak, last_answered_at, last_correct
+      , average_response_ms
       FROM word_stats
       WHERE word_id = ?
     `,
@@ -154,7 +171,7 @@ function readStat(wordId) {
 
 function readStats() {
   const result = database.exec(`
-    SELECT word_id, attempts, correct, wrong, streak, last_answered_at, last_correct
+    SELECT word_id, attempts, correct, wrong, streak, last_answered_at, last_correct, average_response_ms
     FROM word_stats
     ORDER BY word_id
   `);
@@ -164,7 +181,7 @@ function readStats() {
   return Object.fromEntries(result[0].values.map(([wordId, ...values]) => [wordId, rowToStat(values)]));
 }
 
-function rowToStat([attempts, correct, wrong, streak, lastAnsweredAt, lastCorrect]) {
+function rowToStat([attempts, correct, wrong, streak, lastAnsweredAt, lastCorrect, averageResponseMs]) {
   return {
     attempts: Number(attempts),
     correct: Number(correct),
@@ -172,9 +189,19 @@ function rowToStat([attempts, correct, wrong, streak, lastAnsweredAt, lastCorrec
     streak: Number(streak),
     lastAnsweredAt: lastAnsweredAt === null ? undefined : Number(lastAnsweredAt),
     lastCorrect: lastCorrect === null ? undefined : Boolean(lastCorrect),
+    averageResponseMs: averageResponseMs === null ? undefined : Number(averageResponseMs),
   };
 }
 
 async function persist() {
   await writeFile(dbPath, Buffer.from(database.export()));
+}
+
+function ensureColumn(tableName, columnName, columnDefinition) {
+  const info = database.exec(`PRAGMA table_info(${tableName})`);
+  const columns = info[0]?.values.map((row) => row[1]) ?? [];
+
+  if (!columns.includes(columnName)) {
+    database.run(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDefinition}`);
+  }
 }

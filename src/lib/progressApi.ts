@@ -18,10 +18,10 @@ const requestJson = async <T>(path: string, init?: RequestInit): Promise<T> => {
 
 export const fetchStatsFromDb = () => requestJson<StatsByWord>("/api/stats");
 
-export const recordAnswerInDb = (wordId: string, isCorrect: boolean) => {
+export const recordAnswerInDb = (wordId: string, isCorrect: boolean, responseMs?: number) => {
   return requestJson<StatsByWord>("/api/answer", {
     method: "POST",
-    body: JSON.stringify({ wordId, isCorrect }),
+    body: JSON.stringify({ wordId, isCorrect, responseMs }),
   });
 };
 
