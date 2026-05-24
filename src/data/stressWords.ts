@@ -290,6 +290,10 @@ const byLetter: Array<{ letter: string; words: Array<string | Omit<StressEntrySe
     letter: "Ч",
     words: ["чЕрпать"],
   },
+  {
+    letter: "Ш",
+    words: ["шАрфы"],
+  },
 ];
 
 export const stressEntrySeeds: StressEntrySeed[] = byLetter.flatMap(({ letter, words }) =>
