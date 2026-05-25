@@ -1,4 +1,4 @@
-import { ArrowRight, Brain, Check, Layers3, RotateCcw, Sparkles, X } from "lucide-react";
+import { ArrowRight, Brain, Check, Layers3, Repeat2, RotateCcw, Sparkles, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { taskOneCards, taskOneDomains, taskOneGroups, type TaskOneDomain } from "../data/taskOneTraining";
 
@@ -21,7 +21,8 @@ type Round = {
 };
 
 const STORAGE_KEY = "task-one-trainer:v1";
-const AUTO_NEXT_MS = 850;
+const AUTO_NEXT_CORRECT_MS = 950;
+const AUTO_NEXT_WRONG_MS = 2600;
 
 const modes: Array<{ id: TaskOneMode; label: string }> = [
   { id: "classify", label: "Разряд" },
@@ -34,6 +35,7 @@ const domains: Array<{ id: "all" | TaskOneDomain; label: string }> = [
   { id: "pronouns", label: "Местоимения" },
   { id: "coordinating", label: "Сочинит." },
   { id: "subordinating", label: "Подчинит." },
+  { id: "adverbs", label: "Наречия" },
   { id: "intro", label: "Вводные" },
 ];
 
@@ -83,9 +85,8 @@ const pickWeighted = (cards: typeof taskOneCards, stats: TaskOneStats) => {
   return weighted[weighted.length - 1].card;
 };
 
-const buildRound = (mode: TaskOneMode, domain: "all" | TaskOneDomain, stats: TaskOneStats): Round => {
+const buildRoundForCard = (card: (typeof taskOneCards)[number], mode: TaskOneMode, domain: "all" | TaskOneDomain): Round => {
   const cards = taskOneCards.filter((card) => domain === "all" || card.domain === domain);
-  const card = pickWeighted(cards, stats);
   const realMode = mode === "mixed" ? (Math.random() > 0.5 ? "classify" : "reverse") : mode;
 
   if (realMode === "reverse") {
@@ -108,13 +109,23 @@ const buildRound = (mode: TaskOneMode, domain: "all" | TaskOneDomain, stats: Tas
   };
 };
 
+const buildRound = (mode: TaskOneMode, domain: "all" | TaskOneDomain, stats: TaskOneStats, repairQueue: string[] = []): { round: Round; repairQueue: string[] } => {
+  const cards = taskOneCards.filter((card) => domain === "all" || card.domain === domain);
+  const repairCardId = repairQueue.find((cardId) => cards.some((card) => card.id === cardId));
+  const card = repairCardId === undefined ? pickWeighted(cards, stats) : cards.find((candidate) => candidate.id === repairCardId)!;
+  const nextRepairQueue = repairCardId === undefined ? repairQueue : repairQueue.filter((cardId, index) => cardId !== repairCardId || index !== repairQueue.indexOf(repairCardId));
+
+  return { round: buildRoundForCard(card, mode, domain), repairQueue: nextRepairQueue };
+};
+
 export function TaskOneTrainer() {
   const [mode, setMode] = useState<TaskOneMode>("mixed");
   const [domain, setDomain] = useState<"all" | TaskOneDomain>("pronouns");
   const [stats, setStats] = useState<TaskOneStats>(() => loadStats());
-  const [round, setRound] = useState<Round>(() => buildRound("mixed", "pronouns", loadStats()));
+  const [round, setRound] = useState<Round>(() => buildRound("mixed", "pronouns", loadStats()).round);
   const [selected, setSelected] = useState<string | null>(null);
   const [lastCorrect, setLastCorrect] = useState<boolean | null>(null);
+  const [repairQueue, setRepairQueue] = useState<string[]>([]);
   const timerRef = useRef<number | null>(null);
 
   const visibleCards = useMemo(() => taskOneCards.filter((card) => domain === "all" || card.domain === domain), [domain]);
@@ -134,9 +145,11 @@ export function TaskOneTrainer() {
     timerRef.current = null;
   };
 
-  const nextRound = (nextStats = stats, nextMode = mode, nextDomain = domain) => {
+  const nextRound = (nextStats = stats, nextMode = mode, nextDomain = domain, nextRepairQueue = repairQueue) => {
     clearTimer();
-    setRound(buildRound(nextMode, nextDomain, nextStats));
+    const built = buildRound(nextMode, nextDomain, nextStats, nextRepairQueue);
+    setRound(built.round);
+    setRepairQueue(built.repairQueue);
     setSelected(null);
     setLastCorrect(null);
   };
@@ -160,8 +173,10 @@ export function TaskOneTrainer() {
     saveStats(nextStats);
     setSelected(option);
     setLastCorrect(isCorrect);
+    const nextRepairQueue = isCorrect ? repairQueue : [round.card.id, round.card.id, ...repairQueue].slice(0, 8);
+    setRepairQueue(nextRepairQueue);
 
-    timerRef.current = window.setTimeout(() => nextRound(nextStats), AUTO_NEXT_MS);
+    timerRef.current = window.setTimeout(() => nextRound(nextStats, mode, domain, nextRepairQueue), isCorrect ? AUTO_NEXT_CORRECT_MS : AUTO_NEXT_WRONG_MS);
   };
 
   const changeMode = (nextMode: TaskOneMode) => {
@@ -179,7 +194,8 @@ export function TaskOneTrainer() {
     if (!confirmed) return;
     setStats({});
     saveStats({});
-    nextRound({}, mode, domain);
+    setRepairQueue([]);
+    nextRound({}, mode, domain, []);
   };
 
   useEffect(() => clearTimer, []);
@@ -280,11 +296,16 @@ export function TaskOneTrainer() {
 
           <div className="flex min-h-14 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             {lastCorrect === null ? (
-              <p className="text-sm text-stone-600">Отвечай быстро: ошибки будут чаще возвращаться.</p>
+              <p className="text-sm text-stone-600">Сначала вспомни ответ сам, потом выбирай вариант.</p>
             ) : (
-              <div className={["flex items-center gap-2 rounded-md px-3 py-2 text-sm font-semibold", lastCorrect ? "bg-emerald-50 text-emerald-800" : "bg-rose-50 text-rose-800"].join(" ")}>
-                {lastCorrect ? <Check className="h-4 w-4" /> : <X className="h-4 w-4" />}
-                {lastCorrect ? "Верно" : `Нужно: ${round.answer}`}
+              <div className={["rounded-md px-3 py-2 text-sm", lastCorrect ? "bg-emerald-50 text-emerald-800" : "bg-rose-50 text-rose-800"].join(" ")}>
+                <div className="flex items-center gap-2 font-semibold">
+                  {lastCorrect ? <Check className="h-4 w-4" /> : <X className="h-4 w-4" />}
+                  {lastCorrect ? "Верно" : `Нужно: ${round.answer}`}
+                </div>
+                <p className="mt-1">
+                  Проговори: «{round.card.item}» — {round.card.groupTitle.toLocaleLowerCase("ru-RU")}. {round.card.rule}
+                </p>
               </div>
             )}
 
@@ -325,12 +346,22 @@ export function TaskOneTrainer() {
         <div className="rounded-lg border border-stone-200 bg-white p-4 shadow-sm">
           <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.14em] text-stone-500">
             <Sparkles className="h-4 w-4 text-amber-600" />
-            Как учить
+            Быстрое запоминание
           </h2>
           <div className="mt-4 space-y-2 text-sm text-stone-600">
-            <p>1. Сначала режим «Разряд»: слово → категория.</p>
-            <p>2. Потом «Пример»: категория → слово.</p>
-            <p>3. В конце «Блиц»: мозг не знает, что спросят.</p>
+            <p>Активное вспоминание: сначала назови ответ в голове, потом жми.</p>
+            <p>Чередование: «Блиц» мешает типы вопросов, чтобы знание не было привязано к шаблону.</p>
+            <p>Исправление ошибок: промах возвращается в ближайшие вопросы.</p>
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-stone-200 bg-white p-4 shadow-sm">
+          <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.14em] text-stone-500">
+            <Repeat2 className="h-4 w-4 text-teal-700" />
+            Возврат ошибок
+          </h2>
+          <div className="mt-4 rounded-md bg-teal-50 px-3 py-3 text-sm text-teal-900">
+            В очереди повторения: <span className="font-semibold">{repairQueue.length}</span>
           </div>
         </div>
 
