@@ -64,11 +64,6 @@ const saveStats = (stats: TaskOneStats) => {
 
 const getStat = (stats: TaskOneStats, id: string) => stats[id] ?? emptyStat();
 
-const getAccuracy = (stat: TaskOneStat) => {
-  if (stat.attempts === 0) return null;
-  return Math.round((stat.correct / stat.attempts) * 100);
-};
-
 const pickWeighted = (cards: typeof taskOneCards, stats: TaskOneStats) => {
   const weighted = cards.map((card) => {
     const stat = getStat(stats, card.id);
@@ -146,29 +141,14 @@ const buildRound = (mode: TaskOneMode, domain: "all" | TaskOneDomain, stats: Tas
 
 const getVisibleGroups = (domain: "all" | TaskOneDomain) => taskOneGroups.filter((group) => domain === "all" || group.domain === domain);
 
-const normalizeRecall = (value: string) =>
-  value
-    .toLocaleLowerCase("ru-RU")
-    .replaceAll("ё", "е")
-    .replace(/[^а-яa-z0-9]+/gi, "");
-
-const checkRecallAnswer = (input: string, group: TaskOneGroup) => {
-  const compactInput = normalizeRecall(input);
-  const found = group.items.filter((item) => compactInput.includes(normalizeRecall(item)));
-  const missing = group.items.filter((item) => !compactInput.includes(normalizeRecall(item)));
-  const score = Math.round((found.length / group.items.length) * 100);
-
-  return { found, missing, score, isPerfect: missing.length === 0 };
-};
-
 export function TaskOneTrainer() {
   const [mode, setMode] = useState<TaskOneMode>("recall");
   const [domain, setDomain] = useState<"all" | TaskOneDomain>("pronouns");
   const [stats, setStats] = useState<TaskOneStats>(() => loadStats());
   const [round, setRound] = useState<Round>(() => buildRound("mixed", "pronouns", loadStats()).round);
   const [recallGroup, setRecallGroup] = useState<TaskOneGroup>(() => pickWeightedGroup(getVisibleGroups("pronouns"), loadStats(), []));
-  const [recallInput, setRecallInput] = useState("");
-  const [recallResult, setRecallResult] = useState<ReturnType<typeof checkRecallAnswer> | null>(null);
+  const [isRecallRevealed, setIsRecallRevealed] = useState(false);
+  const [lastRecallKnown, setLastRecallKnown] = useState<boolean | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [lastCorrect, setLastCorrect] = useState<boolean | null>(null);
   const [repairQueue, setRepairQueue] = useState<string[]>([]);
@@ -210,8 +190,8 @@ export function TaskOneTrainer() {
 
     setRecallGroup(nextGroup);
     setRecallRepairQueue(consumedQueue);
-    setRecallInput("");
-    setRecallResult(null);
+    setIsRecallRevealed(false);
+    setLastRecallKnown(null);
   };
 
   const answer = (option: string) => {
@@ -257,25 +237,26 @@ export function TaskOneTrainer() {
     }
   };
 
-  const submitRecall = () => {
-    if (recallResult !== null) return;
-    const result = checkRecallAnswer(recallInput, recallGroup);
+  const gradeRecall = (knewAnswer: boolean) => {
+    if (!isRecallRevealed || lastRecallKnown !== null) return;
     const stat = getStat(stats, `group:${recallGroup.id}`);
     const nextStats = {
       ...stats,
       [`group:${recallGroup.id}`]: {
         attempts: stat.attempts + 1,
-        correct: stat.correct + (result.isPerfect ? 1 : 0),
-        wrong: stat.wrong + (result.isPerfect ? 0 : 1),
-        streak: result.isPerfect ? Math.max(0, stat.streak) + 1 : Math.min(0, stat.streak) - 1,
+        correct: stat.correct + (knewAnswer ? 1 : 0),
+        wrong: stat.wrong + (knewAnswer ? 0 : 1),
+        streak: knewAnswer ? Math.max(0, stat.streak) + 1 : Math.min(0, stat.streak) - 1,
       },
     };
-    const nextRepairQueue = result.isPerfect ? recallRepairQueue : [recallGroup.id, recallGroup.id, ...recallRepairQueue].slice(0, 8);
+    const nextRepairQueue = knewAnswer ? recallRepairQueue : [recallGroup.id, recallGroup.id, ...recallRepairQueue].slice(0, 8);
 
     setStats(nextStats);
     saveStats(nextStats);
-    setRecallResult(result);
+    setLastRecallKnown(knewAnswer);
     setRecallRepairQueue(nextRepairQueue);
+
+    timerRef.current = window.setTimeout(() => nextRecallGroup(nextStats, domain, nextRepairQueue), knewAnswer ? 850 : 1700);
   };
 
   const reset = () => {
@@ -349,44 +330,63 @@ export function TaskOneTrainer() {
                 <p className="mx-auto mt-5 max-w-xl text-center text-sm text-stone-600">{recallGroup.rule}</p>
               </div>
 
-              <textarea
-                value={recallInput}
-                onChange={(event) => setRecallInput(event.target.value)}
-                disabled={recallResult !== null}
-                placeholder="Пиши через запятую: я, ты, он..."
-                className="min-h-32 w-full resize-y rounded-lg border border-stone-200 bg-white px-4 py-3 text-base text-stone-950 outline-none transition placeholder:text-stone-400 focus:border-teal-500 focus:ring-4 focus:ring-teal-100 disabled:bg-stone-50"
-              />
-
-              {recallResult ? (
-                <div className={["rounded-lg border p-4", recallResult.isPerfect ? "border-emerald-200 bg-emerald-50" : "border-rose-200 bg-rose-50"].join(" ")}>
-                  <div className="flex items-center gap-2 font-semibold">
-                    {recallResult.isPerfect ? <Check className="h-5 w-5 text-emerald-700" /> : <X className="h-5 w-5 text-rose-700" />}
-                    <span>{recallResult.isPerfect ? "Полный список" : `Вспомнил ${recallResult.score}%`}</span>
+              <div className="rounded-lg border border-stone-200 bg-white p-4 shadow-sm">
+                {!isRecallRevealed ? (
+                  <div className="py-4 text-center">
+                    <p className="text-sm text-stone-600">Вспомни весь список в голове. Потом открой ответ.</p>
+                    <button
+                      type="button"
+                      onClick={() => setIsRecallRevealed(true)}
+                      className="mt-4 inline-flex h-12 w-full max-w-sm items-center justify-center rounded-md bg-stone-950 px-4 text-sm font-semibold text-white"
+                    >
+                      Показать ответ
+                    </button>
                   </div>
-                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                    <ResultList title="Вспомнил" items={recallResult.found} tone="good" />
-                    <ResultList title="Забыл" items={recallResult.missing} tone="bad" />
+                ) : (
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-stone-500">Ответ</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {recallGroup.items.map((item) => (
+                        <span key={item} className="rounded-md bg-teal-100 px-3 py-2 text-base font-semibold text-teal-950">
+                          {item}
+                        </span>
+                      ))}
+                    </div>
+                    <p className="mt-4 text-sm text-stone-600">Если назвал все без подсказки — жми «Знал». Если пропустил хотя бы одно — «Не знал».</p>
                   </div>
-                  <p className="mt-3 text-sm text-stone-700">Правильный формат: {recallGroup.items.join(", ")}</p>
-                </div>
-              ) : null}
+                )}
 
-              <div className="flex flex-col gap-2 sm:flex-row">
+                {lastRecallKnown !== null ? (
+                  <div className={["mt-4 flex items-center gap-2 rounded-md px-3 py-2 text-sm font-semibold", lastRecallKnown ? "bg-emerald-50 text-emerald-800" : "bg-rose-50 text-rose-800"].join(" ")}>
+                    {lastRecallKnown ? <Check className="h-4 w-4" /> : <X className="h-4 w-4" />}
+                    {lastRecallKnown ? "Отлично, закрепляем дальше" : "Вернём этот разряд в ближайших карточках"}
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="grid gap-2 sm:grid-cols-3">
                 <button
                   type="button"
-                  onClick={submitRecall}
-                  disabled={recallInput.trim().length === 0 || recallResult !== null}
-                  className="inline-flex h-12 flex-1 items-center justify-center rounded-md bg-stone-950 px-4 text-sm font-semibold text-white disabled:bg-stone-300"
+                  onClick={() => gradeRecall(false)}
+                  disabled={!isRecallRevealed || lastRecallKnown !== null}
+                  className="inline-flex h-12 items-center justify-center rounded-md border border-rose-200 bg-rose-50 px-4 text-sm font-semibold text-rose-800 disabled:opacity-40"
                 >
-                  Проверить
+                  Не знал
+                </button>
+                <button
+                  type="button"
+                  onClick={() => gradeRecall(true)}
+                  disabled={!isRecallRevealed || lastRecallKnown !== null}
+                  className="inline-flex h-12 items-center justify-center rounded-md bg-emerald-600 px-4 text-sm font-semibold text-white disabled:opacity-40"
+                >
+                  Знал
                 </button>
                 <button
                   type="button"
                   onClick={() => nextRecallGroup()}
-                  disabled={recallResult === null}
-                  className="inline-flex h-12 flex-1 items-center justify-center gap-2 rounded-md border border-stone-200 bg-white px-4 text-sm font-semibold text-stone-800 disabled:text-stone-300"
+                  className="inline-flex h-12 items-center justify-center gap-2 rounded-md border border-stone-200 bg-white px-4 text-sm font-semibold text-stone-800"
                 >
-                  Следующий разряд
+                  Следующая
                   <ArrowRight className="h-4 w-4" />
                 </button>
               </div>
@@ -547,27 +547,6 @@ function StatTile({ label, value }: { label: string; value: string | number }) {
     <div className="rounded-md bg-stone-100 px-2 py-3 text-center text-stone-900">
       <div className="text-lg font-semibold">{value}</div>
       <div className="mt-1 text-xs">{label}</div>
-    </div>
-  );
-}
-
-function ResultList({ title, items, tone }: { title: string; items: string[]; tone: "good" | "bad" }) {
-  const toneClass = tone === "good" ? "bg-emerald-100 text-emerald-900" : "bg-rose-100 text-rose-900";
-
-  return (
-    <div>
-      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-stone-500">{title}</p>
-      <div className="mt-2 flex flex-wrap gap-1.5">
-        {items.length === 0 ? (
-          <span className="text-sm text-stone-500">пусто</span>
-        ) : (
-          items.map((item) => (
-            <span key={item} className={`rounded-md px-2 py-1 text-sm font-medium ${toneClass}`}>
-              {item}
-            </span>
-          ))
-        )}
-      </div>
     </div>
   );
 }
